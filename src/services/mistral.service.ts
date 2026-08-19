@@ -1,6 +1,6 @@
 import { Mistral } from '@mistralai/mistralai'
 import { Prisma } from '@prisma/client'
-import { delay, SUBTESTS, sseClients } from '../lib/constants'
+import { BLUEPRINTS, delay, SUBTESTS, sseClients } from '../lib/constants'
 import { QuestionData, MistralQuestionBatch } from '../types'
 import { prisma } from '../lib/prisma'
 
@@ -55,15 +55,26 @@ async function generateBatch(
   subjectName: string,
   type: string,
   count: number,
-  batchIndex: number
+  specificInstruction: string,
+  retryCount: number = 0,
+  previousError: string = ''
 ): Promise<MistralQuestionBatch> {
+  if (retryCount > 3) {
+    throw new Error(`Gagal generate batch untuk ${subjectName} setelah 3 kali percobaan perbaikan.`)
+  }
+
   const typeLabel = type === 'MULTIPLE_CHOICE' ? 'pilihan ganda (4 opsi A/B/C/D)' : 'isian singkat'
   const optionsInstruction =
     type === 'MULTIPLE_CHOICE'
       ? `"options": ["A. ...", "B. ...", "C. ...", "D. ..."], "correctAnswer": "A" (hanya hurufnya)`
       : `"options": null, "correctAnswer": "jawaban singkat"`
 
-  const prompt = `Kamu adalah pembuat soal UTBK/SNBT profesional. Buatkan tepat ${count} soal ${typeLabel} untuk subtes ${subjectName} (${subject}) pada ujian UTBK SNBT Indonesia.
+  let prompt = `Kamu adalah pembuat soal UTBK/SNBT profesional.
+
+INSTRUKSI SPESIFIK BATCH INI:
+${specificInstruction}
+
+Buatkan tepat ${count} soal ${typeLabel} untuk subtes ${subjectName} (${subject}) pada ujian UTBK SNBT Indonesia.
 
 Kembalikan HANYA JSON valid dengan format berikut (tanpa markdown, tanpa komentar):
 {
@@ -78,10 +89,16 @@ Kembalikan HANYA JSON valid dengan format berikut (tanpa markdown, tanpa komenta
 
 Pastikan:
 - Soal sesuai tingkat kesulitan UTBK SNBT
-- Soal bervariasi dan tidak repetitif
+- Soal HANYA membahas topik yang tertera pada INSTRUKSI SPESIFIK BATCH INI
 - Bahasa Indonesia yang baik dan benar
-- Pembahasan jelas dan edukatif
-- Batch ke-${batchIndex + 1}: buat soal yang BERBEDA dari batch sebelumnya`
+- Pembahasan jelas dan edukatif`
+
+  // ==========================================
+  // SELF-HEALING: Injeksi error sebelumnya ke prompt
+  // ==========================================
+  if (previousError) {
+    prompt += `\n\nPERINGATAN PENTING: Pada percobaan sebelumnya, output kamu gagal divalidasi karena error berikut:\n"${previousError}"\nTolong JANGAN ulangi kesalahan tersebut. Perbaiki format JSON dan pastikan jumlah soal tepat ${count}.`
+  }
 
   const response = await mistral.chat.complete({
     model: 'mistral-small-latest',
@@ -93,15 +110,39 @@ Pastikan:
 
   const content = response.choices?.[0]?.message?.content
   if (!content || typeof content !== 'string') {
-    throw new Error(`Empty response from Mistral for ${subject} batch ${batchIndex}`)
+    return generateBatch(subject, subjectName, type, count, specificInstruction, retryCount + 1, 'Response dari API kosong atau bukan string.')
   }
 
-  const parsed = JSON.parse(content) as MistralQuestionBatch
-  if (!parsed.questions || !Array.isArray(parsed.questions)) {
-    throw new Error(`Invalid JSON structure from Mistral for ${subject}`)
-  }
+  try {
+    const parsed = JSON.parse(content) as MistralQuestionBatch
 
-  return parsed
+    // ==========================================
+    // THE JUDGE: Validasi ketat sebelum return
+    // ==========================================
+    if (!parsed.questions || !Array.isArray(parsed.questions)) {
+      throw new Error("JSON tidak memiliki root array bernama 'questions'.")
+    }
+    if (parsed.questions.length !== count) {
+      throw new Error(`Jumlah soal tidak sesuai. Diminta ${count} soal, tapi kamu memberikan ${parsed.questions.length} soal.`)
+    }
+
+    parsed.questions.forEach((q, idx) => {
+      if (!q.text) throw new Error(`Soal index ke-${idx} tidak memiliki 'text'.`)
+      if (!q.explanation) throw new Error(`Soal index ke-${idx} tidak memiliki 'explanation'.`)
+
+      if (type === 'MULTIPLE_CHOICE') {
+        if (!q.options || q.options.length !== 4) {
+          throw new Error(`Soal index ke-${idx} ('${q.text.substring(0, 20)}...') harus memiliki tepat 4 opsi array.`)
+        }
+        if (!q.correctAnswer) throw new Error(`Soal index ke-${idx} tidak memiliki 'correctAnswer'.`)
+      }
+    })
+
+    return parsed
+  } catch (error: any) {
+    console.warn(`[Batch Error - Retry ${retryCount + 1}/3] ${error.message}`)
+    return generateBatch(subject, subjectName, type, count, specificInstruction, retryCount + 1, error.message)
+  }
 }
 
 export async function generateTryoutInBackground(userId: string): Promise<void> {
@@ -122,6 +163,8 @@ export async function generateTryoutInBackground(userId: string): Promise<void> 
     let requestCount = 0
 
     for (const subtest of SUBTESTS) {
+      const blueprints = BLUEPRINTS[subtest.subject] ?? []
+
       for (const typeSpec of subtest.types) {
         const { type, count } = typeSpec
         let remaining = count
@@ -141,8 +184,14 @@ export async function generateTryoutInBackground(userId: string): Promise<void> 
             await delay(REQUEST_DELAY_MS)
           }
 
+          const specificInstruction =
+            batchIdx < blueprints.length
+              ? blueprints[batchIdx]
+              : `Buat soal dengan topik lanjutan acak yang relevan dengan subtes ${subtest.name}.`
+
+          // generateBatch sudah self-healing: kalau throw, berarti gagal total setelah 3 retry
           try {
-            const batch = await generateBatch(subtest.subject, subtest.name, type, batchCount, batchIdx)
+            const batch = await generateBatch(subtest.subject, subtest.name, type, batchCount, specificInstruction)
 
             batch.questions.slice(0, batchCount).forEach((q) => {
               allQuestions.push({
@@ -158,25 +207,8 @@ export async function generateTryoutInBackground(userId: string): Promise<void> 
             })
           } catch (err) {
             console.error(`Error generating batch for ${subtest.subject}:`, err)
-            await delay(2000)
-            try {
-              const batch = await generateBatch(subtest.subject, subtest.name, type, batchCount, batchIdx)
-              batch.questions.slice(0, batchCount).forEach((q) => {
-                allQuestions.push({
-                  subject: subtest.subject,
-                  type,
-                  text: q.text,
-                  options: q.options ?? undefined,
-                  correctAnswer: q.correctAnswer,
-                  explanation: q.explanation,
-                  orderIndex: allQuestions.length,
-                })
-                totalGenerated++
-              })
-            } catch {
-              sendSSEError(userId, `Gagal generate soal ${subtest.name}. Silakan coba lagi.`)
-              return
-            }
+            sendSSEError(userId, `Gagal generate soal ${subtest.name} setelah beberapa percobaan. Silakan coba lagi.`)
+            return
           }
 
           requestCount++
