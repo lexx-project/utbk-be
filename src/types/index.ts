@@ -11,6 +11,7 @@ export interface QuestionData {
 export interface MistralQuestionBatch {
   questions: Array<{
     text: string
+    step_by_step_calculation?: string
     options?: string[]
     correctAnswer: string
     explanation: string

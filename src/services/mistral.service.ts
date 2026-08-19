@@ -76,13 +76,17 @@ ${specificInstruction}
 
 Buatkan tepat ${count} soal ${typeLabel} untuk subtes ${subjectName} (${subject}) pada ujian UTBK SNBT Indonesia.
 
+ATURAN KETAT MATEMATIKA & LOGIKA:
+Jika ini soal hitungan, kamu WAJIB menghitung hasil akhirnya secara akurat. Jawaban yang benar WAJIB terdapat di dalam pilihan (options). DILARANG membuat soal yang opsinya tidak memiliki jawaban yang benar.
+
 Kembalikan HANYA JSON valid dengan format berikut (tanpa markdown, tanpa komentar):
 {
   "questions": [
     {
       "text": "teks soal lengkap (bisa termasuk bacaan/stimulus jika diperlukan)",
+      "step_by_step_calculation": "Tuliskan langkah-langkah perhitungan matematika atau analisis logikanya di sini SEBELUM menentukan opsi",
       ${optionsInstruction},
-      "explanation": "pembahasan detail mengapa jawaban tersebut benar"
+      "explanation": "pembahasan akhir yang dirangkum untuk user (tidak boleh mengandung kalimat ragu-ragu atau menyebut soal ini salah)"
     }
   ]
 }
@@ -130,11 +134,36 @@ Pastikan:
       if (!q.text) throw new Error(`Soal index ke-${idx} tidak memiliki 'text'.`)
       if (!q.explanation) throw new Error(`Soal index ke-${idx} tidak memiliki 'explanation'.`)
 
+      // --- 1. DETEKSI PENGAKUAN DOSA (HALUSINASI MATEMATIKA) ---
+      const explanationLower = q.explanation.toLowerCase()
+      const calcLower = (q as any).step_by_step_calculation?.toLowerCase() || ''
+      const combinedCheck = explanationLower + " " + calcLower
+
+      const forbiddenPhrases = [
+        "opsi tidak tersedia", "kesalahan dalam soal", "soal perlu direvisi",
+        "tidak tepat", "mohon perbaikan", "seharusnya", "direvisi",
+        "tidak konsisten", "tidak masuk akal", "tidak ada pilihan yang tepat",
+        "perhitungan yang benar adalah", "asumsi soal berbeda"
+      ]
+
+      for (const phrase of forbiddenPhrases) {
+        if (combinedCheck.includes(phrase)) {
+          throw new Error(`AI meragukan hitungannya sendiri (ditemukan kata: "${phrase}"). Buat ulang soal dengan angka yang konsisten dan opsi yang valid.`)
+        }
+      }
+      // --------------------------------------------------------
+
       if (type === 'MULTIPLE_CHOICE') {
         if (!q.options || q.options.length !== 4) {
           throw new Error(`Soal index ke-${idx} ('${q.text.substring(0, 20)}...') harus memiliki tepat 4 opsi array.`)
         }
         if (!q.correctAnswer) throw new Error(`Soal index ke-${idx} tidak memiliki 'correctAnswer'.`)
+
+        // --- 2. PASTIKAN KUNCI JAWABAN ADA DI ARRAY OPTIONS ---
+        const answerExists = q.options.some((opt: string) => opt.startsWith(q.correctAnswer + "."))
+        if (!answerExists) {
+          throw new Error(`Kunci jawaban "${q.correctAnswer}" ternyata tidak ditemukan di dalam pilihan ganda soal index ke-${idx}.`)
+        }
       }
     })
 
