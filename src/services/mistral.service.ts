@@ -141,14 +141,22 @@ Pastikan:
       const calcLower = (q as any).step_by_step_calculation?.toLowerCase() || ''
       const combinedCheck = explanationLower + " " + calcLower
 
+      // Base tier: berlaku untuk semua subjek — indikasi kerusakan parah universal
       const forbiddenPhrases = [
         "opsi tidak tersedia", "kesalahan dalam soal", "soal perlu direvisi",
-        "tidak tepat", "mohon perbaikan", "seharusnya", "direvisi",
-        "tidak konsisten", "tidak masuk akal", "tidak ada pilihan yang tepat",
-        "perhitungan yang benar adalah", "asumsi soal berbeda",
-        "tidak terpenuhi", "paling mendekati", "saling kontradiksi",
-        "tidak ada jawaban benar", "off-by-one", "melanggar aturan"
+        "mohon perbaikan", "tidak ada pilihan yang tepat", "asumsi soal berbeda",
+        "tidak ada jawaban benar", "melanggar aturan"
       ]
+
+      // Strict tier: HANYA untuk subjek hitungan/logika
+      const isMathOrLogic = ['PENG', 'PM2', 'PU'].includes(subject)
+      if (isMathOrLogic) {
+        forbiddenPhrases.push(
+          "tidak konsisten", "tidak masuk akal", "perhitungan yang benar adalah",
+          "tidak terpenuhi", "paling mendekati", "saling kontradiksi", "off-by-one",
+          "tidak tepat", "seharusnya", "direvisi"
+        )
+      }
 
       for (const phrase of forbiddenPhrases) {
         if (combinedCheck.includes(phrase)) {
