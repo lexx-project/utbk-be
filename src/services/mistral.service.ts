@@ -77,7 +77,9 @@ ${specificInstruction}
 Buatkan tepat ${count} soal ${typeLabel} untuk subtes ${subjectName} (${subject}) pada ujian UTBK SNBT Indonesia.
 
 ATURAN KETAT MATEMATIKA & LOGIKA:
-Jika ini soal hitungan, kamu WAJIB menghitung hasil akhirnya secara akurat. Jawaban yang benar WAJIB terdapat di dalam pilihan (options). DILARANG membuat soal yang opsinya tidak memiliki jawaban yang benar.
+1. Jika ini soal hitungan, kamu WAJIB menghitung hasil akhirnya secara akurat di "step_by_step_calculation". Jawaban benar WAJIB ada di pilihan (options).
+2. JIKA MEMBUAT SOAL HIMPUNAN (Diagram Venn): Pastikan persentase total gabungan tidak lebih dari 100%. Hukum mutlak: Irisan dua himpunan HARUS selalu LEBIH BESAR ATAU SAMA DENGAN irisan tiga himpunan.
+3. JIKA MEMBUAT SOAL PENALARAN POSISI (Urutan duduk/Antrean): Uji kembali jawabanmu! Jawaban yang benar WAJIB memenuhi SEMUA aturan yang kamu buat. Jangan membuat syarat yang saling berkontradiksi (mustahil dipecahkan). Batasi jumlah objek/orang maksimal 5 saja agar logikanya tetap solid.
 
 Kembalikan HANYA JSON valid dengan format berikut (tanpa markdown, tanpa komentar):
 {
@@ -143,7 +145,9 @@ Pastikan:
         "opsi tidak tersedia", "kesalahan dalam soal", "soal perlu direvisi",
         "tidak tepat", "mohon perbaikan", "seharusnya", "direvisi",
         "tidak konsisten", "tidak masuk akal", "tidak ada pilihan yang tepat",
-        "perhitungan yang benar adalah", "asumsi soal berbeda"
+        "perhitungan yang benar adalah", "asumsi soal berbeda",
+        "tidak terpenuhi", "paling mendekati", "saling kontradiksi",
+        "tidak ada jawaban benar", "off-by-one", "melanggar aturan"
       ]
 
       for (const phrase of forbiddenPhrases) {
